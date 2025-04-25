@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from scraper import collect_ads
+from streamlit_scraper import collect_ads
 from utils import display_images, zip_images
 
 st.set_page_config(page_title="Adspy Collector", layout="wide")

@@ -1,13 +1,15 @@
 import os
 import time
 import tempfile
-import undetected_chromedriver as uc
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from PIL import Image
 
 
 def collect_ads(url, platform="Google Ads", screenshot_count=5):
@@ -30,21 +32,49 @@ def collect_ads(url, platform="Google Ads", screenshot_count=5):
         raise ValueError(f"Unsupported platform: {platform}")
 
 
+def setup_driver():
+    """Set up Chrome driver with appropriate options for Streamlit Cloud"""
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-popup-blocking")
+    
+    # Add user agent to appear more like a regular browser
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    # Add arguments to help avoid detection
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    
+    driver = webdriver.Chrome(options=options)
+    
+    # Execute JavaScript to further avoid detection
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    return driver
+
+
 def collect_google_ads(url, screenshot_count=5):
     """Collect ad screenshots from Google Ads Transparency Center"""
     
-    # Setup driver
-    options = uc.ChromeOptions()
-    options.headless = True
-    options.add_argument("--window-size=1920,1080")  # Set a consistent window size
-    driver = uc.Chrome(options=options)
+    driver = setup_driver()
     
     try:
         driver.get(url)
         
-        # Wait for the ads to load with explicit wait instead of sleep
-        wait = WebDriverWait(driver, 10)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'priority-creative-grid creative-preview')))
+        # Wait for the ads to load with explicit wait
+        wait = WebDriverWait(driver, 15)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'priority-creative-grid creative-preview')))
+        except:
+            print("Could not find ad elements directly, taking full page screenshot")
+            full_screen_path = os.path.join(tempfile.gettempdir(), "google_full_page.png")
+            driver.save_screenshot(full_screen_path)
+            return [full_screen_path]
         
         # Scroll to load more ads
         last_height = driver.execute_script("return document.body.scrollHeight")
@@ -74,17 +104,51 @@ def collect_google_ads(url, screenshot_count=5):
                 screenshot_path = os.path.join(tempfile.gettempdir(), f"google_ad_{i}.png")
                 
                 # Take screenshot of only this specific element
-                ad.screenshot(screenshot_path)
-                image_paths.append(screenshot_path)
-                print(f"Successfully captured Google ad {i}")
+                try:
+                    ad.screenshot(screenshot_path)
+                    image_paths.append(screenshot_path)
+                    print(f"Successfully captured Google ad {i}")
+                except Exception as e:
+                    print(f"Failed element screenshot, trying alternative method: {e}")
+                    # Alternative method using full page screenshot and cropping
+                    location = ad.location
+                    size = ad.size
+                    
+                    driver.save_screenshot(screenshot_path + ".temp.png")
+                    img = Image.open(screenshot_path + ".temp.png")
+                    
+                    left = max(0, location['x'])
+                    top = max(0, location['y'])
+                    right = min(img.width, left + size['width'])
+                    bottom = min(img.height, top + size['height'])
+                    
+                    if left < right and top < bottom:
+                        cropped = img.crop((left, top, right, bottom))
+                        cropped.save(screenshot_path)
+                        image_paths.append(screenshot_path)
+                        print(f"Successfully captured Google ad {i} with alternative method")
+                    else:
+                        print(f"Invalid crop dimensions: {left}, {top}, {right}, {bottom}")
                 
             except Exception as e:
                 print(f"Failed to capture Google ad {i}: {e}")
         
+        if not image_paths:
+            print("No ads captured, taking full page screenshot as fallback")
+            full_screen_path = os.path.join(tempfile.gettempdir(), "google_full_page.png")
+            driver.save_screenshot(full_screen_path)
+            return [full_screen_path]
+            
         return image_paths
     except Exception as e:
         print(f"Error during Google scraping: {e}")
-        return []
+        try:
+            # Take a full page screenshot as fallback
+            full_screen_path = os.path.join(tempfile.gettempdir(), "google_error_page.png")
+            driver.save_screenshot(full_screen_path)
+            return [full_screen_path]
+        except:
+            return []
     finally:
         # Always quit the driver, even in case of error
         driver.quit()
@@ -93,35 +157,15 @@ def collect_google_ads(url, screenshot_count=5):
 def collect_meta_ads(url, screenshot_count=5):
     """Collect ad screenshots from Meta Ads Library"""
     
-    # Setup driver with more robust configuration
-    options = uc.ChromeOptions()
-    options.headless = True  # Use headless for Streamlit compatibility
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-gpu")
-    
-    # Add arguments specifically to help with headless mode on Facebook
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--disable-dev-shm-usage')
-    
-    # Add user agent to appear more like a regular browser
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    driver = uc.Chrome(options=options)
+    driver = setup_driver()
     
     try:
-        # Execute JavaScript to avoid detection
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
         # Navigate to the URL
         print(f"Opening Meta Ads URL: {url}")
         driver.get(url)
         
         # Give Facebook time to load initial content
-        time.sleep(7)  # Increased wait time for headless mode
+        time.sleep(7)
         
         # Check if we need to handle a cookie consent dialog
         try:
@@ -141,7 +185,7 @@ def collect_meta_ads(url, screenshot_count=5):
         
         # Wait for the page to load and stabilize
         print("Waiting for page to load...")
-        time.sleep(5)  # Increased wait time
+        time.sleep(5)
         
         # First try with the most specific selector
         ad_selector = 'div[role="article"]'
@@ -207,7 +251,7 @@ def collect_meta_ads(url, screenshot_count=5):
         image_paths = []
         ads_captured = 0
         scroll_attempts = 0
-        max_scroll_attempts = 20  # Increased for headless mode
+        max_scroll_attempts = 20
         
         # Track which ads we've already processed to avoid duplicates
         processed_ads = set()

@@ -10,6 +10,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from PIL import Image
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 
 
 def collect_ads(url, platform="Google Ads", screenshot_count=5):
@@ -34,8 +36,9 @@ def collect_ads(url, platform="Google Ads", screenshot_count=5):
 
 def setup_driver():
     """Set up Chrome driver with appropriate options for Streamlit Cloud"""
+    # Configure Chrome options
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
@@ -50,7 +53,30 @@ def setup_driver():
     # Add arguments to help avoid detection
     options.add_argument('--disable-blink-features=AutomationControlled')
     
-    driver = webdriver.Chrome(options=options)
+    # Use webdriver-manager to handle ChromeDriver installation
+    try:
+        # First try with ChromeType.CHROMIUM which works better on some Linux distributions
+        service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception as e:
+        print(f"Failed to initialize ChromeDriver with CHROMIUM type: {e}")
+        try:
+            # Fall back to standard Chrome
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+        except Exception as e:
+            print(f"Failed to initialize standard ChromeDriver: {e}")
+            # Last resort - try direct path that might work on Streamlit Cloud
+            try:
+                options.binary_location = "/usr/bin/chromium-browser"
+                driver = webdriver.Chrome(options=options)
+            except Exception as e:
+                print(f"All ChromeDriver initialization methods failed: {e}")
+                # Take a screenshot of error message and return it
+                error_img_path = os.path.join(tempfile.gettempdir(), "chrome_error.png")
+                with open(error_img_path, 'w') as f:
+                    f.write(f"ChromeDriver initialization failed: {e}")
+                raise
     
     # Execute JavaScript to further avoid detection
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -60,8 +86,14 @@ def setup_driver():
 
 def collect_google_ads(url, screenshot_count=5):
     """Collect ad screenshots from Google Ads Transparency Center"""
-    
-    driver = setup_driver()
+    try:
+        driver = setup_driver()
+    except Exception as e:
+        print(f"Failed to set up driver: {e}")
+        error_path = os.path.join(tempfile.gettempdir(), "driver_error.txt")
+        with open(error_path, 'w') as f:
+            f.write(f"Driver setup failed: {e}")
+        return [error_path]
     
     try:
         driver.get(url)
@@ -148,16 +180,28 @@ def collect_google_ads(url, screenshot_count=5):
             driver.save_screenshot(full_screen_path)
             return [full_screen_path]
         except:
-            return []
+            error_path = os.path.join(tempfile.gettempdir(), "scraping_error.txt")
+            with open(error_path, 'w') as f:
+                f.write(f"Scraping error: {e}")
+            return [error_path]
     finally:
         # Always quit the driver, even in case of error
-        driver.quit()
+        try:
+            driver.quit()
+        except:
+            pass
 
 
 def collect_meta_ads(url, screenshot_count=5):
     """Collect ad screenshots from Meta Ads Library"""
-    
-    driver = setup_driver()
+    try:
+        driver = setup_driver()
+    except Exception as e:
+        print(f"Failed to set up driver: {e}")
+        error_path = os.path.join(tempfile.gettempdir(), "driver_error.txt")
+        with open(error_path, 'w') as f:
+            f.write(f"Driver setup failed: {e}")
+        return [error_path]
     
     try:
         # Navigate to the URL
@@ -390,7 +434,10 @@ def collect_meta_ads(url, screenshot_count=5):
             driver.save_screenshot(full_screen_path)
             return [full_screen_path]
         except:
-            return []
+            error_path = os.path.join(tempfile.gettempdir(), "scraping_error.txt")
+            with open(error_path, 'w') as f:
+                f.write(f"Scraping error: {e}")
+            return [error_path]
     finally:
         # Always quit the driver, even in case of error
         try:
